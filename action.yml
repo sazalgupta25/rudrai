@@ -1,0 +1,29 @@
+name: RudrAI Scan
+description: Scan AI-agent instructions, MCP configurations, and dependency manifests
+inputs:
+  path:
+    description: Path to scan
+    required: false
+    default: .
+  fail-on:
+    description: Minimum severity that fails the job
+    required: false
+    default: high
+  output:
+    description: SARIF output path
+    required: false
+    default: rudrai-results.sarif
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install RudrAI from action checkout
+      shell: bash
+      run: python -m pip install "${{ github.action_path }}"
+    - name: Run RudrAI
+      shell: bash
+      run: rudrai scan "${{ inputs.path }}" --format sarif --output "${{ inputs.output }}" --fail-on "${{ inputs.fail-on }}"
+

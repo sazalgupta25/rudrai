@@ -1,7 +1,7 @@
 # RudrAI Architecture Review Board — Joint Panel Report
 
 **Review Date**: 2026-09-13
-**Documents Reviewed**: [RUDRAI_REQUIREMENTS_SPEC.md](file:///c:/sazal/rudrai/RUDRAI_REQUIREMENTS_SPEC.md) · [MVP_SPEC_AGENT_SCANNER.md](file:///c:/sazal/rudrai/MVP_SPEC_AGENT_SCANNER.md)
+**Documents Reviewed**: [RUDRAI_REQUIREMENTS_SPEC.md](RUDRAI_REQUIREMENTS_SPEC.md) · [MVP_SPEC_AGENT_SCANNER.md](MVP_SPEC_AGENT_SCANNER.md)
 
 **Panel**:
 - **[SA]** — Principal Security Architect
