@@ -25,8 +25,8 @@ dependencies = ["pathspec>=0.12,<2", "tomli>=2,<3; python_version < '3.11'"]
 rudrai = "rudrai.cli:main"
 
 [project.urls]
-Documentation = "https://github.com/rudrai/rudrai"
-Repository = "https://github.com/rudrai/rudrai"
+Documentation = "https://github.com/sazalgupta25/rudrai"
+Repository = "https://github.com/sazalgupta25/rudrai"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
