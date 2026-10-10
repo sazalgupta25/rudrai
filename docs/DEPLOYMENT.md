@@ -66,6 +66,28 @@ Set-Location C:\sazal\rudrai
 
 ## 3. Recommended local deployment with pipx
 
+### One-click Windows setup
+
+From the repository root, double-click `Setup-RudrAI.cmd`. It starts
+`scripts/setup-local.ps1`, which checks Python, installs `pipx` for the current
+user if needed, and installs or refreshes RudrAI from this checkout. It keeps
+RudrAI's `pipx` environment in the ignored
+`.rudrai-pipx` folder within this checkout, avoiding conflicts with other `pipx`
+installations or restricted profile folders. It does not require administrator
+privileges.
+
+The launcher uses an execution-policy bypass only for its own PowerShell process;
+it does not change the computer's saved execution policy or PATH. Review the
+PowerShell script before running it if the checkout is not trusted. After setup,
+run `rudrai.cmd --version` from the repository root; the scoped scan runner uses
+the same local installation automatically.
+
+For an install plus test and benchmark validation, run:
+
+```powershell
+.\scripts\setup-local.ps1 -RunValidation
+```
+
 Install directly from the current checkout:
 
 ```text
@@ -157,11 +179,13 @@ For an offline or controlled environment:
 
 1. Build the wheel on a connected, trusted build machine.
 2. Record and verify its SHA-256 checksum.
-3. Transfer the wheel through the approved artifact channel.
-4. Install that exact wheel without contacting a package index:
+3. Download runtime dependency wheels for the target Python and operating system
+   into a `wheelhouse/` on the connected machine. Dependencies are `pathspec` and,
+   on Python 3.10, `tomli`; transfer their checksums and wheels with RudrAI.
+4. Install using only the transferred wheelhouse:
 
 ```text
-pipx install --backend pip ./dist/rudrai-0.1.0-py3-none-any.whl
+pipx install --backend pip --pip-args="--no-index --find-links=./wheelhouse" ./dist/rudrai-0.1.0-py3-none-any.whl
 ```
 
 Adjust the filename for the release version being installed. Runtime scanning
@@ -218,14 +242,71 @@ Exit codes are stable:
 - `0`: scan completed without an unsuppressed finding at the selected threshold.
 - `1`: scan completed and found an unsuppressed finding at the threshold.
 - `2`: invalid CLI usage or configuration.
-- `3`: operational scan failure.
+- `3`: operational scan/output failure or incomplete coverage (including unreadable,
+  oversized, malformed or blocked referenced files), even with `--fail-on none`.
+
+Intentional exclusions do not make a scan partial. `--strict` disables finding
+suppressions only; it retains path exclusions. JSON/SARIF record completeness.
+Treat incomplete coverage as a failed gate, not a clean result.
+
+File reports are accompanied by `<report>.sha256`. Verify the exact bytes with:
+
+```text
+rudrai verify rudrai-results.sarif
+```
+
+Verification returns `0` for matching bytes, `1` for mismatch and `3` for read
+failure. This is a checksum, not a signature or proof of trusted provenance.
 
 The root `action.yml` provides a composite GitHub Action for repositories that
 consume RudrAI from a checked-out release. `.github/workflows/ci.yml` runs the
-test suite on Python 3.10 through 3.13 and builds the distribution. Before a
-public release, validate the same commands on Windows, macOS, and Linux runners.
+test suite on Python 3.10 through 3.13 across Windows, macOS, and Linux and builds
+the distribution. Matrix configuration is not evidence of passing remote jobs;
+review all job results before a public release.
 
-## 10. Release boundary
+## 10. Scoped Windows scan runner
+
+`scripts/run-rudrai-scan.ps1` saves a timestamped report and JSONL event file in
+the ignored `rudrai_scans` folder in this checkout by default. It uses the `Project` profile by default,
+which excludes generated/vendor folders, test fixtures, documentation and example
+directories to reduce noise. This is an explicit scope choice, not a clean bill
+of health for those excluded paths.
+
+For SARIF or JSON scans, it also saves a `.summary.txt` file that presents every
+finding with its location, evidence, problem statement and remediation. SARIF and
+JSON remain the machine-readable artifacts; read the summary first during manual
+triage.
+
+Run it against a project:
+
+```powershell
+.\scripts\run-rudrai-scan.ps1 C:\path\to\project
+```
+
+Use the `Home` profile for a personal-machine scan; it additionally excludes
+Codex, Claude, IDE, cache and application-data directories:
+
+```powershell
+.\scripts\run-rudrai-scan.ps1 $HOME -Profile Home
+```
+
+To deliberately scan documentation or examples, opt in:
+
+```powershell
+.\scripts\run-rudrai-scan.ps1 C:\path\to\project -IncludeDocumentation -IncludeExamples
+```
+
+Select JSON instead of SARIF, choose destinations, or enable strict mode:
+
+```powershell
+.\scripts\run-rudrai-scan.ps1 C:\path\to\project -Format json -OutputPath C:\reports\scan.json -EventsFile C:\reports\events.jsonl -Strict
+```
+
+The runner keeps an interactive PowerShell window open by default and sets
+`$LASTEXITCODE` to RudrAI's result. Add `-ExitWithCode` when the script is being
+run non-interactively and the caller should receive the scanner's exit code.
+
+## 11. Release boundary
 
 Registry verification is deliberately reserved. Passing `--check-registries`
 returns exit code `2` instead of silently making a network request. Connected

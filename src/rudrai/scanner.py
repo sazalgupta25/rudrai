@@ -3,14 +3,16 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from pathspec import GitIgnoreSpec
 
 from . import RULE_PACK_VERSION, __version__
 from .config import Config, load_config
 from .detectors import detect_dependencies, detect_mcp, detect_text, extract_local_references
-from .discovery import DiscoveredFile, classify, discover
+from .discovery import DiscoveredFile, classify, discover, validate_path
 from .events import EventSink
 from .models import Finding, ScanReport, ScanStats
 from .rules import RULES
@@ -31,17 +33,31 @@ def _fingerprint(finding: Finding) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _read(path: Path) -> str:
+def _read(path: Path, limit: int = 1024 * 1024) -> str:
     try:
-        data = path.read_bytes()
+        validate_path(path)
+        with path.open("rb") as handle:
+            data = handle.read(limit + 1)
     except OSError as exc:
         raise ScanOperationalError(f"cannot read {path}: {exc}") from exc
     if b"\x00" in data[:8192]:
         raise ScanOperationalError(f"binary file cannot be scanned as text: {path}")
-    return data.decode("utf-8-sig", errors="replace")
+    if len(data) > limit:
+        raise ScanOperationalError(f"file exceeds {limit} bytes: {path}")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ScanOperationalError(f"file is not UTF-8: {path}") from exc
 
 
 def _analyze(item: DiscoveredFile, text: str) -> list[Finding]:
+    if item.kind == "mcp" or item.path.name == "package.json":
+        try:
+            payload = json.loads(text)
+            if not isinstance(payload, dict):
+                raise ValueError("manifest root must be an object")
+        except (ValueError, RecursionError) as exc:
+            raise ScanOperationalError(f"cannot audit {item.relative}: {exc}") from exc
     findings = detect_text(item.relative, text, item.kind == "instruction")
     if item.kind == "mcp":
         findings.extend(detect_mcp(item.relative, text))
@@ -56,11 +72,14 @@ def _expand_references(
     texts: dict[Path, str],
     max_file_size: int,
     events: EventSink,
+    on_skipped,
+    exclude: list[str],
 ) -> list[DiscoveredFile]:
     root_resolved = root.resolve()
     known = {item.path for item in items}
     frontier = list(items)
     expanded: list[DiscoveredFile] = []
+    exclusions = GitIgnoreSpec.from_lines(exclude)
     for depth in (1, 2):
         next_frontier: list[DiscoveredFile] = []
         for source in frontier:
@@ -68,21 +87,31 @@ def _expand_references(
                 continue
             text = texts.get(source.path, "")
             for raw in extract_local_references(text):
-                candidate = (source.path.parent / raw).resolve()
+                candidate = Path(os.path.abspath(source.path.parent / raw))
                 try:
                     candidate.relative_to(root_resolved)
                 except ValueError:
-                    events.emit("file_skipped", file=raw, reason="reference escapes scan root", source=source.relative)
+                    on_skipped(raw, "reference escapes scan root")
                     continue
-                if candidate in known or not candidate.is_file() or candidate.is_symlink():
+                if candidate in known:
+                    continue
+                if exclusions.match_file(candidate.relative_to(root_resolved).as_posix()):
+                    on_skipped(raw, "excluded")
                     continue
                 try:
-                    if candidate.stat().st_size > max_file_size:
-                        events.emit("file_skipped", file=candidate.as_posix(), reason="referenced file too large")
+                    validate_path(candidate)
+                    if not candidate.is_file():
+                        on_skipped(raw, "missing reference")
                         continue
-                    candidate_text = _read(candidate)
-                except (OSError, ScanOperationalError) as exc:
-                    events.emit("file_skipped", file=candidate.as_posix(), reason=str(exc))
+                    if candidate.stat().st_size > max_file_size:
+                        on_skipped(raw, "referenced file too large")
+                        continue
+                    if len(items) + len(expanded) >= 10000 or sum(len(t.encode('utf-8')) for t in texts.values()) + candidate.stat().st_size > 64 * 1024 * 1024:
+                        on_skipped(raw, "scan resource budget exceeded")
+                        continue
+                    candidate_text = _read(candidate, min(max_file_size, 64 * 1024 * 1024))
+                except (OSError, ValueError, ScanOperationalError) as exc:
+                    on_skipped(raw, str(exc))
                     continue
                 item = DiscoveredFile(
                     path=candidate,
@@ -111,10 +140,12 @@ def run_scan(
 ) -> ScanReport:
     started = time.perf_counter()
     event_sink = events or EventSink()
-    resolved = target.expanduser().resolve()
+    resolved = validate_path(target)
     config: Config = load_config(resolved if resolved.is_dir() else resolved.parent)
     all_excludes = [*config.exclude, *(exclude or [])]
     skipped_count = 0
+    coverage: list[dict[str, str]] = []
+    incomplete = False
     event_sink.emit(
         "scan_started",
         target=(resolved if resolved.is_dir() else resolved.parent).as_posix(),
@@ -124,8 +155,12 @@ def run_scan(
     )
 
     def on_skipped(file: str, reason: str) -> None:
-        nonlocal skipped_count
+        nonlocal skipped_count, incomplete
         skipped_count += 1
+        classification = "excluded" if reason in {"excluded", "directory excluded"} else "incomplete"
+        incomplete = incomplete or classification == "incomplete"
+        if len(coverage) < 10000:
+            coverage.append({"file": file, "reason": reason, "classification": classification})
         event_sink.emit("file_skipped", file=file, reason=reason)
 
     root, items = discover(
@@ -140,25 +175,40 @@ def run_scan(
 
     texts: dict[Path, str] = {}
     readable_items: list[DiscoveredFile] = []
-    read_workers = min(16, max(1, len(items)))
+    read_workers = min(16, max(1, len(items)), max(1, (64 * 1024 * 1024) // config.max_file_size))
+    discovered_count = len(items)
+    total_bytes = 0
     with ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="rudrai-read") as read_pool:
-        read_futures = [read_pool.submit(_read, item.path) for item in items]
-        for item, future in zip(items, read_futures):
-            try:
-                texts[item.path] = future.result()
-                readable_items.append(item)
-            except ScanOperationalError as exc:
-                skipped_count += 1
-                event_sink.emit("file_skipped", file=item.relative, reason=str(exc))
+        # Bounded batches avoid retaining unbounded futures or file contents.
+        for offset in range(0, len(items), read_workers):
+            batch = items[offset:offset + read_workers]
+            read_futures = [read_pool.submit(_read, item.path, min(config.max_file_size, 64 * 1024 * 1024)) for item in batch]
+            for item, future in zip(batch, read_futures):
+                try:
+                    text = future.result()
+                    total_bytes += len(text.encode("utf-8"))
+                    if total_bytes > 64 * 1024 * 1024 or len(readable_items) >= 10000:
+                        on_skipped(item.relative, "scan resource budget exceeded")
+                        continue
+                    texts[item.path] = text
+                    readable_items.append(item)
+                except (ScanOperationalError, ValueError, OSError) as exc:
+                    on_skipped(item.relative, str(exc))
     items = readable_items
-    items.extend(_expand_references(root, items, texts, config.max_file_size, event_sink))
+    references = _expand_references(root, items, texts, config.max_file_size, event_sink, on_skipped, all_excludes)
+    items.extend(references)
 
     workers = min(32, max(1, (os.cpu_count() or 1) + 4), max(1, len(items)))
     findings: list[Finding] = []
+    analyzed_count = 0
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="rudrai") as pool:
         futures = [pool.submit(_analyze, item, texts[item.path]) for item in items]
-        for future in futures:
-            findings.extend(future.result())
+        for item, future in zip(items, futures):
+            try:
+                findings.extend(future.result())
+                analyzed_count += 1
+            except (ScanOperationalError, ValueError, RecursionError, TypeError, AttributeError) as exc:
+                on_skipped(item.relative, str(exc))
 
     unique: dict[str, Finding] = {}
     for finding in findings:
@@ -207,7 +257,11 @@ def run_scan(
         strict=strict,
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         findings=findings,
-        stats=ScanStats(discovered=len(items), scanned=len(items), skipped=skipped_count, duration_ms=duration_ms),
+        stats=ScanStats(discovered=discovered_count + len(references), scanned=analyzed_count, skipped=skipped_count, duration_ms=duration_ms),
+        status="partial" if incomplete else "complete",
+        coverage=coverage,
+        exclusions=all_excludes,
+        config_digest=config.digest,
     )
     event_sink.emit(
         "scan_completed",
@@ -215,6 +269,7 @@ def run_scan(
         skipped=report.stats.skipped,
         findings=len(findings),
         duration_ms=duration_ms,
+        status=report.status,
     )
     return report
 

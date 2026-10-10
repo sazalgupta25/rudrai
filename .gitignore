@@ -12,3 +12,6 @@ rudrai-results.json
 rudrai-results.sarif
 rudrai-events.jsonl
 
+.test-deps/
+.rudrai-pipx/
+rudrai_scans/

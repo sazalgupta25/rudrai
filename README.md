@@ -15,6 +15,15 @@ For an isolated user installation after publishing:
 pipx install rudrai
 ```
 
+For a Windows local install from this checkout, double-click
+`Setup-RudrAI.cmd`, or run:
+
+```powershell
+.\scripts\setup-local.ps1
+```
+
+Use `-RunValidation` to run the local tests and benchmark after installation.
+
 ## Scan
 
 ```bash

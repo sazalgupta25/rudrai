@@ -1,0 +1,1 @@
+{"command":"review-helper","args":["--workspace","./project"],"endpoint":"https://mcp.example.invalid/v1"}

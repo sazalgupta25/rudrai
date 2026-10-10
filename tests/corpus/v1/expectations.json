@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0",
+  "false_positive_budget": 0,
+  "cases": [
+    {
+      "id": "benign-negated-command",
+      "classification": "benign",
+      "path": "cases/benign-negated-command",
+      "expected_findings": []
+    },
+    {
+      "id": "benign-quoted-policy",
+      "classification": "benign",
+      "path": "cases/benign-quoted-policy",
+      "expected_findings": []
+    },
+    {
+      "id": "benign-separated-signals",
+      "classification": "benign",
+      "path": "cases/benign-separated-signals",
+      "expected_findings": []
+    },
+    {
+      "id": "benign-safe-mcp",
+      "classification": "benign",
+      "path": "cases/benign-safe-mcp",
+      "expected_findings": []
+    },
+    {
+      "id": "benign-pinned-dependency",
+      "classification": "benign",
+      "path": "cases/benign-pinned-dependency",
+      "expected_findings": []
+    },
+    {
+      "id": "malicious-remote-shell",
+      "classification": "malicious",
+      "critical": true,
+      "path": "cases/malicious-remote-shell",
+      "expected_findings": [
+        {"rule_id": "RAI-EXEC-001", "severity": "CRITICAL", "confidence": "HIGH", "file": "SKILL.md", "start_line": 2},
+        {"rule_id": "RAI-REF-001", "severity": "LOW", "confidence": "MEDIUM", "file": "SKILL.md", "start_line": 2}
+      ]
+    },
+    {
+      "id": "malicious-camouflaged-credentials",
+      "classification": "malicious",
+      "critical": true,
+      "path": "cases/malicious-camouflaged-credentials",
+      "expected_findings": [
+        {"rule_id": "RAI-INTENT-001", "severity": "CRITICAL", "confidence": "HIGH", "file": "AGENTS.md", "start_line": 2},
+        {"rule_id": "RAI-INTENT-002", "severity": "HIGH", "confidence": "MEDIUM", "file": "AGENTS.md", "start_line": 2}
+      ]
+    },
+    {
+      "id": "windows-persistence",
+      "classification": "malicious",
+      "path": "cases/windows-persistence",
+      "expected_findings": [
+        {"rule_id": "RAI-EXEC-002", "severity": "HIGH", "confidence": "HIGH", "file": "SKILL.md", "start_line": 2},
+        {"rule_id": "RAI-PERSIST-001", "severity": "HIGH", "confidence": "MEDIUM", "file": "SKILL.md", "start_line": 2}
+      ]
+    },
+    {
+      "id": "obfuscated-payload",
+      "classification": "malicious",
+      "path": "cases/obfuscated-payload",
+      "expected_findings": [
+        {"rule_id": "RAI-OBF-002", "severity": "MEDIUM", "confidence": "MEDIUM", "file": "AGENTS.md", "start_line": 2}
+      ]
+    },
+    {
+      "id": "mcp-overprivilege",
+      "classification": "malicious",
+      "path": "cases/mcp-overprivilege",
+      "expected_findings": [
+        {"rule_id": "RAI-MCP-001", "severity": "HIGH", "confidence": "HIGH", "file": "mcp.json", "start_line": 1},
+        {"rule_id": "RAI-MCP-002", "severity": "HIGH", "confidence": "HIGH", "file": "mcp.json", "start_line": 1},
+        {"rule_id": "RAI-MCP-003", "severity": "HIGH", "confidence": "HIGH", "file": "mcp.json", "start_line": 1}
+      ]
+    },
+    {
+      "id": "dependency-direct-url",
+      "classification": "malicious",
+      "path": "cases/dependency-direct-url",
+      "expected_findings": [
+        {"rule_id": "RAI-DEP-002", "severity": "MEDIUM", "confidence": "HIGH", "file": "requirements.txt", "start_line": 1}
+      ]
+    },
+    {
+      "id": "split-payload",
+      "classification": "malicious",
+      "critical": true,
+      "path": "cases/split-payload",
+      "expected_findings": [
+        {"rule_id": "RAI-EXEC-001", "severity": "CRITICAL", "confidence": "HIGH", "file": "scripts/setup.sh", "start_line": 1}
+      ]
+    }
+  ]
+}

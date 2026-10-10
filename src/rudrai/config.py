@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import fnmatch
 import json
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ class Config:
     exclude: list[str] = field(default_factory=list)
     suppressions: list[Suppression] = field(default_factory=list)
     max_file_size: int = 1_048_576
+    digest: str | None = None
 
 
 def _scalar(raw: str) -> Any:
@@ -73,7 +75,7 @@ def _parse_schema_yaml(text: str) -> dict[str, Any]:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip(" "))
-        if "\t" in line[:indent]:
+        if line.startswith("\t") or "\t" in line[:indent + 1]:
             raise ConfigError(f"line {line_number}: tabs are not supported")
         token = line.strip()
         if indent == 0:
@@ -82,6 +84,8 @@ def _parse_schema_yaml(text: str) -> dict[str, Any]:
                 raise ConfigError(f"line {line_number}: expected key: value")
             key, raw = token.split(":", 1)
             key = key.strip()
+            if key in result:
+                raise ConfigError(f"line {line_number}: duplicate key {key!r}")
             raw = raw.strip()
             if key not in {"exclude", "suppressions", "max_file_size"}:
                 raise ConfigError(f"line {line_number}: unknown key {key!r}")
@@ -94,7 +98,7 @@ def _parse_schema_yaml(text: str) -> dict[str, Any]:
                 result[key] = _scalar(raw)
             continue
         if section == "exclude" and token.startswith("-"):
-            result["exclude"].append(str(_scalar(token[1:].strip())))
+            result["exclude"].append(_scalar(token[1:].strip()))
             continue
         if section == "suppressions":
             if token.startswith("-"):
@@ -109,6 +113,8 @@ def _parse_schema_yaml(text: str) -> dict[str, Any]:
                 continue
             if current is not None and ":" in token:
                 key, raw = token.split(":", 1)
+                if key.strip() in current:
+                    raise ConfigError(f"line {line_number}: duplicate suppression key")
                 current[key.strip()] = _scalar(raw)
                 continue
         raise ConfigError(f"line {line_number}: unsupported YAML structure")
@@ -120,10 +126,19 @@ def load_config(scan_root: Path) -> Config:
     if not path.is_file():
         return Config()
     try:
-        raw = _parse_schema_yaml(path.read_text(encoding="utf-8-sig"))
+        from .discovery import validate_path
+        validate_path(path)
+        with path.open("rb") as handle:
+            config_bytes = handle.read(1024 * 1024 + 1)
+        if len(config_bytes) > 1024 * 1024:
+            raise ConfigError("configuration exceeds 1 MiB")
+        raw = _parse_schema_yaml(config_bytes.decode("utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ConfigError(f"cannot read {path}: {exc}") from exc
 
+    unknown = set(raw) - {"exclude", "suppressions", "max_file_size"}
+    if unknown:
+        raise ConfigError(f"unknown configuration keys: {', '.join(sorted(unknown))}")
     exclude = raw.get("exclude", [])
     suppressions = raw.get("suppressions", [])
     max_file_size = raw.get("max_file_size", 1_048_576)
@@ -131,7 +146,7 @@ def load_config(scan_root: Path) -> Config:
         raise ConfigError("exclude must be a list of glob strings")
     if not isinstance(suppressions, list):
         raise ConfigError("suppressions must be a list")
-    if not isinstance(max_file_size, int) or not 1 <= max_file_size <= 100 * 1024 * 1024:
+    if type(max_file_size) is not int or not 1 <= max_file_size <= 100 * 1024 * 1024:
         raise ConfigError("max_file_size must be between 1 and 104857600 bytes")
 
     parsed_suppressions: list[Suppression] = []
@@ -144,6 +159,8 @@ def load_config(scan_root: Path) -> Config:
         missing = [key for key in ("rule_id", "path", "reason") if not item.get(key)]
         if missing:
             raise ConfigError(f"suppression {index} is missing: {', '.join(missing)}")
+        if any(not isinstance(value, str) for value in item.values()):
+            raise ConfigError(f"suppression {index} values must be strings")
         expires = None
         if item.get("expires"):
             try:
@@ -159,5 +176,5 @@ def load_config(scan_root: Path) -> Config:
                 expires=expires,
             )
         )
-    return Config(path=path, exclude=exclude, suppressions=parsed_suppressions, max_file_size=max_file_size)
+    return Config(path=path, exclude=exclude, suppressions=parsed_suppressions, max_file_size=max_file_size, digest=hashlib.sha256(config_bytes).hexdigest())
 

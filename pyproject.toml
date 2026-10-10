@@ -19,7 +19,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Topic :: Security",
 ]
-dependencies = []
+dependencies = ["pathspec>=0.12,<2", "tomli>=2,<3; python_version < '3.11'"]
 
 [project.scripts]
 rudrai = "rudrai.cli:main"

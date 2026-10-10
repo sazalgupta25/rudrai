@@ -78,4 +78,8 @@ class ScanReport:
     findings: list[Finding] = field(default_factory=list)
     stats: ScanStats = field(default_factory=ScanStats)
     checksum_sha256: str = ""
+    status: str = "complete"
+    coverage: list[dict[str, str]] = field(default_factory=list)
+    exclusions: list[str] = field(default_factory=list)
+    config_digest: str | None = None
 

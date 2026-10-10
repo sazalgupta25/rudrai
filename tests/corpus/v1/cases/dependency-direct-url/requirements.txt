@@ -1,0 +1,1 @@
+reviewed-package @ https://example.invalid/reviewed-package-1.0.whl

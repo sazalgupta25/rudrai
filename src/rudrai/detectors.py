@@ -4,13 +4,17 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Iterable
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from .models import Confidence, Finding, Severity
 from .rules import RULES
 
 
 REMOTE_SHELL = re.compile(
-    r"(?:curl|wget|iwr|invoke-webrequest)\b[^\n|;]{0,400}(?:\||;)\s*(?:ba)?sh\b",
+    r"(?:curl|wget|iwr|invoke-webrequest)\b[^|;]{0,400}(?:\||;)\s*(?:ba)?sh\b",
     re.IGNORECASE,
 )
 POWERSHELL_RISK = re.compile(
@@ -20,7 +24,7 @@ POWERSHELL_RISK = re.compile(
 )
 CREDENTIAL = re.compile(
     r"(?:~[/\\]\.?(?:ssh|aws|kube)|\.env\b|id_rsa|aws[/\\]credentials|"
-    r"%userprofile%[/\\]\.ssh|%appdata%|%localappdata%|credential manager|keychain)",
+    r"(?:%userprofile%|\$env:userprofile)[/\\]\.ssh|%appdata%|%localappdata%|credential manager|keychain)",
     re.IGNORECASE,
 )
 EXECUTION = re.compile(
@@ -39,7 +43,7 @@ OVERRIDE = re.compile(
 )
 PERSISTENCE = re.compile(
     r"(?:\.bashrc|\.zshrc|\bcron(?:tab)?\b|launchagents|task scheduler|schtasks|"
-    r"registry .{0,30}\brun\b|startup folder|powershell .{0,20}\$profile|on every (?:prompt|session|startup))",
+    r"registry .{0,30}\brun\b|hk(?:cu|lm)[^\n]{0,120}[/\\]run\b|startup folder|\$profile\b|on every (?:prompt|session|startup))",
     re.IGNORECASE,
 )
 BENIGN_PURPOSE = re.compile(
@@ -51,6 +55,10 @@ UNICODE_CONTROLS = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
 INSTALL_COMMAND = re.compile(r"\b(?:pip(?:3)?\s+install|npm\s+(?:install|i)|npx)\s+([^\n`]+)", re.IGNORECASE)
 DIRECT_URL = re.compile(r"(?:https?://|git\+https?://|github:|git@)", re.IGNORECASE)
 EXTERNAL_URL = re.compile(r"https?://[^\s)>'\"`]+", re.IGNORECASE)
+NEGATED_OR_QUOTED = re.compile(
+    r"(?:\b(?:do not|don't|never|avoid|prohibited|forbidden|must not|should not)\b|^\s*>)",
+    re.IGNORECASE,
+)
 REFERENCE_PATTERNS = [
     re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)([^)]+)\)", re.IGNORECASE),
     re.compile(r"^\s*(?:source|script|file)\s*:\s*[\"']?([^\"'\s#]+)", re.IGNORECASE | re.MULTILINE),
@@ -87,7 +95,7 @@ def _finding(
         rule_id=rule.rule_id,
         rule_name=rule.name,
         category=rule.category,
-        severity=severity or rule.severity,
+        severity=severity if severity is not None else rule.severity,
         confidence=confidence or rule.confidence,
         file=relative,
         start_line=start_line,
@@ -99,15 +107,46 @@ def _finding(
     )
 
 
+def _line_bounds(text: str, offset: int) -> tuple[int, int]:
+    start = text.rfind("\n", 0, offset) + 1
+    end = text.find("\n", offset)
+    return start, len(text) if end == -1 else end
+
+
+def _is_non_executing_context(text: str, match: re.Match[str]) -> bool:
+    """Return true for a quoted or explicitly prohibited command on its line.
+
+    This is deliberately narrow: it only suppresses a match where the surrounding
+    instruction explicitly says not to perform it, rather than trying to infer the
+    safety of arbitrary prose.
+    """
+    start, end = _line_bounds(text, match.start())
+    line = text[start:end]
+    return bool(NEGATED_OR_QUOTED.search(line))
+
+
+def _active_matches(pattern: re.Pattern[str], text: str) -> list[re.Match[str]]:
+    return [match for match in pattern.finditer(text) if not _is_non_executing_context(text, match)]
+
+
+def _nearby(*matches: re.Match[str] | None, max_lines: int = 12) -> bool:
+    """Require related intent signals to appear in the same local instruction block."""
+    selected = [match for match in matches if match is not None]
+    if len(selected) < 2:
+        return bool(selected)
+    lines = [match.string.count("\n", 0, match.start()) for match in selected]
+    return max(lines) - min(lines) <= max_lines
+
+
 def detect_text(relative: str, text: str, instruction: bool) -> list[Finding]:
     findings: list[Finding] = []
-    remote = REMOTE_SHELL.search(text)
-    powershell = POWERSHELL_RISK.search(text)
-    credential = CREDENTIAL.search(text)
-    execution = EXECUTION.search(text)
-    stealth = STEALTH.search(text)
-    override = OVERRIDE.search(text)
-    persistence = PERSISTENCE.search(text)
+    remote = next(iter(_active_matches(REMOTE_SHELL, text)), None)
+    powershell = next(iter(_active_matches(POWERSHELL_RISK, text)), None)
+    credential = next(iter(_active_matches(CREDENTIAL, text)), None)
+    execution = next(iter(_active_matches(EXECUTION, text)), None)
+    stealth = next(iter(_active_matches(STEALTH, text)), None)
+    override = next(iter(_active_matches(OVERRIDE, text)), None)
+    persistence = next(iter(_active_matches(PERSISTENCE, text)), None)
     purpose = BENIGN_PURPOSE.search(text[:2000])
     unicode_control = UNICODE_CONTROLS.search(text)
     encoded = BASE64_BLOB.search(text)
@@ -141,40 +180,40 @@ def detect_text(relative: str, text: str, instruction: bool) -> list[Finding]:
             ("persistence_intent", persistence), ("purpose_mismatch", purpose),
         ]
         signals = [name for name, match in clustered if match]
-        if purpose and execution and (credential or stealth or persistence):
+        if purpose and execution and (credential or stealth or persistence) and _nearby(execution, credential or stealth or persistence):
             anchor = execution
             findings.append(_finding(
-                "RAI-INTENT-001", relative, text, anchor, signals,
+                "RAI-INTENT-001", relative, text, anchor, [*signals, "nearby_signal_cluster"],
                 "A document presented as benign guidance contains concealed operational behavior.",
             ))
-        elif credential and execution and (stealth or override):
+        elif credential and execution and (stealth or override) and _nearby(credential, execution, stealth or override):
             anchor = stealth or override or execution
             findings.append(_finding(
-                "RAI-INTENT-001", relative, text, anchor, signals,
+                "RAI-INTENT-001", relative, text, anchor, [*signals, "nearby_signal_cluster"],
                 "Credential targeting is combined with execution and concealment instructions.",
             ))
-        if (stealth and override) or (stealth and execution):
+        if (override and (execution or credential) and _nearby(override, execution or credential)) or (stealth and execution and _nearby(stealth, execution)):
             anchor = override or stealth
-            confidence = Confidence.HIGH if override and execution else Confidence.MEDIUM
+            confidence = Confidence.HIGH if override and execution and _nearby(override, execution) else Confidence.MEDIUM
             findings.append(_finding(
-                "RAI-INTENT-002", relative, text, anchor, signals,
+                "RAI-INTENT-002", relative, text, anchor, [*signals, "nearby_signal_cluster"],
                 "The agent is instructed to hide an action or bypass established authority.",
                 confidence=confidence,
             ))
-        if persistence and (execution or stealth):
+        if persistence and (execution or stealth) and _nearby(persistence, execution or stealth):
             findings.append(_finding(
-                "RAI-PERSIST-001", relative, text, persistence, signals,
+                "RAI-PERSIST-001", relative, text, persistence, [*signals, "nearby_signal_cluster"],
                 "The agent is instructed to establish recurring or startup execution.",
                 confidence=Confidence.HIGH if stealth else Confidence.MEDIUM,
             ))
-        install = INSTALL_COMMAND.search(text)
+        install = next(iter(_active_matches(INSTALL_COMMAND, text)), None)
         if install:
             findings.append(_finding(
                 "RAI-DEP-004", relative, text, install,
                 ["dependency_install", "execution_intent"],
                 "Agent instructions direct package installation without independent verification.",
             ))
-        external = EXTERNAL_URL.search(text)
+        external = next(iter(_active_matches(EXTERNAL_URL, text)), None)
         if external:
             findings.append(_finding(
                 "RAI-REF-001", relative, text, external,
@@ -282,32 +321,34 @@ def detect_dependencies(path: Path, relative: str, text: str) -> list[Finding]:
                 ))
                 findings[-1].start_line = findings[-1].end_line = line_number
     elif path.name == "pyproject.toml":
-        section = ""
-        dependency_array = False
-        dependency_sections = {"project.optional-dependencies", "dependency-groups", "tool.poetry.dependencies", "tool.poetry.group"}
-        for line_number, raw in enumerate(text.splitlines(), 1):
-            stripped = raw.strip()
-            section_match = re.fullmatch(r"\[([^]]+)]", stripped)
-            if section_match:
-                section = section_match.group(1).casefold()
-                dependency_array = False
+        payload = tomllib.loads(text)  # Reject malformed manifests; never silently mark them clean.
+        dependencies: list[Any] = []
+        project = payload.get("project", {})
+        if not isinstance(project, dict):
+            raise ValueError("project must be a TOML table")
+        dependencies.extend(project.get("dependencies", []))
+        for values in project.get("optional-dependencies", {}).values():
+            dependencies.extend(values)
+        for values in payload.get("dependency-groups", {}).values():
+            dependencies.extend(values)
+        poetry = payload.get("tool", {}).get("poetry", {})
+        tables = [poetry.get("dependencies", {}), poetry.get("dev-dependencies", {})]
+        tables.extend(group.get("dependencies", {}) for group in poetry.get("group", {}).values())
+        for table in tables:
+            for name, value in table.items():
+                if isinstance(value, dict) and any(key in value for key in ("url", "git", "path")):
+                    dependencies.append(f"{name} @ {value.get('url', value.get('git', value.get('path')))}")
+                elif isinstance(value, str):
+                    dependencies.append(value)
+        for value in dependencies:
+            if isinstance(value, dict) and set(value) == {"include-group"}:
                 continue
-            if re.match(r"dependencies\s*=\s*\[", stripped, re.IGNORECASE):
-                dependency_array = section == "project"
-            in_dependency_context = dependency_array or any(
-                section == name or section.startswith(name + ".") for name in dependency_sections
-            )
-            if in_dependency_context:
-                for value_match in re.finditer(r"[\"']([^\"']+)[\"']", raw):
-                    value = value_match.group(1)
-                    if DIRECT_URL.search(value):
-                        findings.append(_finding(
-                            "RAI-DEP-002", relative, text, None, ["direct_url_dependency"],
-                            "A Python dependency is installed from a direct URL or Git source.", evidence=value,
-                        ))
-                        findings[-1].start_line = findings[-1].end_line = line_number
-            if dependency_array and "]" in stripped:
-                dependency_array = False
+            if not isinstance(value, str):
+                raise ValueError("dependency entries must be strings or include-group mappings")
+            if DIRECT_URL.search(value):
+                findings.append(_finding("RAI-DEP-002", relative, text, None, ["direct_url_dependency"],
+                    "A Python dependency is installed from a direct URL or Git source.", evidence=_evidence(value)))
+        return findings
     return findings
 
 

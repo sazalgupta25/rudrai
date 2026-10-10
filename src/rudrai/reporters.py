@@ -5,19 +5,24 @@ import json
 from collections import Counter
 from dataclasses import asdict
 from typing import Any
+from urllib.parse import quote
 
 from .models import Finding, ScanReport, Severity
 
 
 def _report_dict(report: ScanReport, include_checksum: bool = True) -> dict[str, Any]:
     data: dict[str, Any] = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "scanner": {"name": "rudrai", "version": report.scanner_version, "rule_pack_version": report.rule_pack_version},
         "scan": {
             "target_root": report.target_root,
             "config_path": report.config_path,
             "strict": report.strict,
             "timestamp": report.timestamp,
+            "status": report.status,
+            "coverage": report.coverage,
+            "exclusions": report.exclusions,
+            "config_digest": report.config_digest,
         },
         "stats": asdict(report.stats),
         "suppression_summary": {
@@ -72,7 +77,7 @@ def render_sarif(report: ScanReport) -> str:
             "message": {"text": finding.message},
             "locations": [{
                 "physicalLocation": {
-                    "artifactLocation": {"uri": finding.file},
+                    "artifactLocation": {"uri": quote(finding.file, safe="/")},
                     "region": {"startLine": finding.start_line, "endLine": finding.end_line},
                 }
             }],
@@ -101,7 +106,7 @@ def render_sarif(report: ScanReport) -> str:
                     "rules": list(rules.values()),
                 }
             },
-            "invocations": [{"executionSuccessful": True, "properties": {"strict": report.strict}}],
+            "invocations": [{"executionSuccessful": report.status == "complete", "properties": {"strict": report.strict, "status": report.status, "coverage": report.coverage}}],
             "results": results,
             "properties": {
                 "rulePackVersion": report.rule_pack_version,
@@ -133,13 +138,14 @@ def render_table(report: ScanReport, quiet: bool = False) -> str:
             lines.append(f"  Evidence: {finding.evidence}")
             lines.append(f"  Remediation: {finding.remediation}")
     if not report.findings:
-        lines.append("No findings.")
+        lines.append("No findings." if report.status == "complete" else "No findings in scanned files; coverage is incomplete.")
     counts = Counter(f.severity.label() for f in visible)
     lines.extend([
         "",
         f"Scanned {report.stats.scanned} files in {report.stats.duration_ms}ms; skipped {report.stats.skipped}.",
         "Findings: " + ", ".join(f"{name}={counts.get(name, 0)}" for name in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")),
         f"Suppressed: {sum(1 for finding in report.findings if finding.suppressed)}",
+        f"Scan status: {report.status}",
     ])
     return "\n".join(lines) + "\n"
 

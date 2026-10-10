@@ -2,8 +2,10 @@
 
 ## Current implementation
 
+- [Project tracker and session handoff — start here](PROJECT_TRACKER.md)
 - [Engineering execution specification](RUDRAI_ENGINEERING_EXECUTION_SPEC.md)
 - [Implementation status](IMPLEMENTATION_STATUS.md)
+- [Architecture decisions and hardening backlog](ARCHITECTURE_DECISIONS.md)
 - [Configuration](CONFIGURATION.md)
 - [Deployment](DEPLOYMENT.md)
 
