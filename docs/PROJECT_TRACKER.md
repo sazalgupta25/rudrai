@@ -13,9 +13,12 @@ and residual risks; [deployment](DEPLOYMENT.md) contains operational instruction
 
 - Milestone: MVP-1 offline CLI; initial build implemented, architecture hardening in progress.
 - User approved implementation of the architecture hardening backlog.
-- Last observed commit: `868157c` — initial build version rudrai 0.1.0 (rules 2026.10.0).
+- Last observed commit: `0dd42e0` — Fix package project URLs.
 - First hardening batch is present but **uncommitted**. New sessions must inspect
   current Git state; the commit above does not include that batch.
+- The working tree has uncommitted release-operation additions: TestPyPI/PyPI
+  publishing instructions, a Windows local uninstaller, and README links. No
+  TestPyPI upload or public PyPI release has been recorded.
 - Release readiness: **not accepted**. Cross-platform CI, representative quality
   gates, complete audit hardening and deployment verification remain outstanding.
 - Current recommended work: expand B02 beyond corpus v1 and use its results to
@@ -41,7 +44,7 @@ Do not treat resolved design decisions, configured CI jobs or skipped tests as v
 | M04 | MCP, dependency and cross-file audits (phase 4) | IN PROGRESS | Supported MCP fields and graph, manifest shape validation, reference cycles/depth and Windows parity |
 | M05 | Reports, events and CI (phase 5) | IN PROGRESS | Official SARIF schema validation, redaction, streaming audit and remote CI results |
 | M06 | Evaluation and performance (phase 6) | IN PROGRESS | Representative expected outcomes, precision measurement and attack-heavy performance |
-| M07 | Local deployment and release readiness | IN PROGRESS | Wheel/pipx install/reinstall/upgrade/uninstall with current dependencies, offline wheelhouse and multi-OS proof |
+| M07 | Local deployment and release readiness | IN PROGRESS: local setup and uninstall workflow implemented in the working tree; package build/Twine/wheel smoke evidence recorded locally | Execute uninstall lifecycle tests in clean pipx and pip environments; offline wheelhouse and multi-OS proof |
 
 ## Approved hardening backlog
 
@@ -75,6 +78,8 @@ working tree, not a committed/released artifact. Re-run when source or dependenc
 | 2026-10-10 | CI: Windows/macOS/Linux, Python 3.10–3.13 | Configured, not observed passing | Remote jobs were not run/inspected in this session |
 | 2026-10-10 | Current hardened wheel/pipx and air-gapped installation | NOT VERIFIED | Earlier MVP installation evidence must not be reused for changed runtime dependencies |
 | 2026-10-10 | Windows, Python 3.11; corpus v1 plus full unit suite | 23 executed: 22 passed, 1 skipped; corpus benign false positives 0; 1,000-file benchmark 0.771 seconds | Corpus v1 is small and local; symlink privileges unavailable; no cross-platform or representative precision evidence |
+| 2026-10-10 | Windows, Python 3.11; `python -m build`, `python -m twine check`, isolated wheel/pipx smoke test | Source and wheel built; Twine validation passed; isolated install ran `rudrai --version` and a benign scan successfully | Local-only evidence; no TestPyPI upload, public PyPI release, or multi-OS proof |
+| 2026-10-12 | Windows PowerShell; `scripts/uninstall-local.ps1` syntax parse | Script syntax passed; implementation removes checkout-local pipx state and can optionally uninstall the package from the Python environment selected by `python` | The uninstall workflow has not yet been exercised in an isolated pipx/pip environment |
 
 For future evidence record date, task/milestone ID, commit or working-tree identity,
 OS/Python/dependency versions, exact command, outcome, skips/failures and artifact
@@ -113,6 +118,7 @@ and the next handoff state. Do not publish or deploy without an explicit request
 | 2026-10-10 | Initial hardening batch: coverage failures, filesystem/resource boundaries, discovery/config/manifest improvements, checksums/atomic outputs, event metadata and CI matrix | B02 first, then B06; broader graph, schema, redaction, resource, installation and cross-platform evidence remain |
 | 2026-10-10 | Added project tracker and documentation entry links; runtime unchanged | Baseline should be rerun in a properly installed development environment before the next implementation batch |
 | 2026-10-10 | B02 corpus v1 and B06 local context scoring added; labeled exact outcomes, critical/false-positive/fingerprint gates and nearby/negated/quoted context handling | Expand corpus and calibrate confidence with representative data; complete B07–B12 verification backlog |
+| 2026-10-12 | Added TestPyPI/PyPI release runbook, Windows local uninstaller, optional pip uninstall support, and README links; all remain uncommitted | Review and commit changes; validate uninstall in disposable pipx and pip environments; upload to TestPyPI only with explicit user action |
 
 Append a row after each meaningful session: date, affected IDs/files, completed
 acceptance evidence, incomplete work, blockers, repository state and exact next step.

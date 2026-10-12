@@ -23,6 +23,10 @@ For a Windows local install from this checkout, double-click
 ```
 
 Use `-RunValidation` to run the local tests and benchmark after installation.
+To remove that local installation later, double-click `Uninstall-RudrAI.cmd` or
+run `./scripts/uninstall-local.ps1` from PowerShell. It keeps your scan reports
+unless you explicitly choose their removal. For a `pip` installation, run
+`python -m pip uninstall rudrai`.
 
 ## Scan
 
@@ -43,5 +47,6 @@ produce `3`.
 - [Implementation status](docs/IMPLEMENTATION_STATUS.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Deployment](docs/DEPLOYMENT.md)
+- [TestPyPI and PyPI publishing](docs/DEPLOYMENT.md#8-publish-a-release-to-testpypi)
 - [Requirements and architecture documents](docs/README.md)
 

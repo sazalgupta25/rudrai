@@ -193,6 +193,41 @@ does not require network access.
 
 ## 7. Reinstall, upgrade, and uninstall
 
+### Local Windows installation from this checkout
+
+Double-click `Uninstall-RudrAI.cmd`, or run the following from the repository
+root:
+
+```powershell
+.\scripts\uninstall-local.ps1
+```
+
+This removes only the local `.rudrai-pipx` installation created by
+`Setup-RudrAI.cmd`. It preserves the source checkout, Python, the user's shared
+`pipx` installation, and the `rudrai_scans` reports. To also remove the saved
+reports in this checkout, use:
+
+```powershell
+.\scripts\uninstall-local.ps1 -RemoveScanReports
+```
+
+If RudrAI was also installed into the Python environment selected by `python`
+using `python -m pip install rudrai`, remove that copy with:
+
+```powershell
+.\scripts\uninstall-local.ps1 -UninstallPipPackage
+```
+
+Or use the standard command directly:
+
+```powershell
+python -m pip uninstall rudrai
+```
+
+The script removes both the local pipx installation and the matching pip package
+when this switch is used. To use the one-click launcher for the same action,
+run `Uninstall-RudrAI.cmd pip` from Command Prompt.
+
 For a `pipx` installation made from the local checkout:
 
 ```text
@@ -216,7 +251,83 @@ pipx uninstall rudrai
 For an activated development virtual environment, refresh the editable install
 with `python -m pip install --upgrade -e .`.
 
-## 8. Published-package status
+## 8. Publish a release to TestPyPI
+
+Use TestPyPI to validate the exact package that users would install before
+publishing the same version to the public PyPI service. TestPyPI and PyPI are
+separate services: create a TestPyPI account and API token at
+<https://test.pypi.org/manage/account/token/>. Do not commit, paste into an
+issue, or place the token in a repository file.
+
+Before upload, run the package checks from the repository root:
+
+```text
+python -m build
+python -m twine check dist/*
+```
+
+Upload the artifacts interactively. This avoids recording the token in
+PowerShell history or a command line:
+
+```powershell
+python -m twine upload --repository testpypi dist/*
+```
+
+When Twine prompts for credentials, enter `__token__` as the username and paste
+the **TestPyPI** API token as the password. A token issued by production PyPI
+will not work on TestPyPI, and vice versa.
+
+After the upload succeeds, confirm the release page:
+
+```text
+https://test.pypi.org/project/rudrai/
+```
+
+Test an install in a new virtual environment (or another clean machine). The
+extra public PyPI index supplies normal dependencies that may not be mirrored to
+TestPyPI:
+
+```powershell
+python -m venv .venv-testpypi
+.\.venv-testpypi\Scripts\Activate.ps1
+python -m pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple rudrai==0.1.0
+rudrai --version
+rudrai scan tests\fixtures\benign --quiet
+deactivate
+```
+
+Use the version that was uploaded in place of `0.1.0`. PyPI-style registries do
+not allow replacing an already uploaded version. If anything needs correction,
+increase `version` in `pyproject.toml`, rebuild both artifacts, and repeat the
+checks and TestPyPI validation.
+
+Record the release URL, the exact package version, and the test result in the
+GitHub release or change record. The generated `dist/` artifacts are build
+outputs; they are intentionally not committed.
+
+## 9. Promote a tested version to public PyPI
+
+The repository includes `.github/workflows/publish.yml`, which builds and
+publishes when a GitHub Release is published. It uses PyPI Trusted Publishing,
+so a production API token should not be placed in GitHub secrets.
+
+Before the first public release, configure the publisher in the **PyPI** project
+settings (not TestPyPI) with these exact values:
+
+| Setting | Value |
+| --- | --- |
+| Owner | `sazalgupta25` |
+| Repository | `rudrai` |
+| Workflow | `publish.yml` |
+| Environment | `pypi` |
+
+For the first PyPI publication, create a pending publisher if the `rudrai`
+project does not yet exist on PyPI. Then create and publish a GitHub Release
+whose tag matches `pyproject.toml` (for example, `v0.1.0`). Watch the workflow
+run and verify the project page at <https://pypi.org/project/rudrai/>. Only
+after that is the public command `pipx install rudrai` available.
+
+## 10. Published-package status
 
 The `rudrai` distribution is not currently published on PyPI. Until publication,
 this command will not install the project:
@@ -229,7 +340,7 @@ Use `pipx install --backend pip .` from the repository root or install a locally
 built wheel. After an official release is published, the expected public install
 command will be `pipx install rudrai`.
 
-## 9. CI gate
+## 11. CI gate
 
 Run RudrAI as a CI security gate and retain SARIF as an artifact:
 
@@ -264,7 +375,7 @@ test suite on Python 3.10 through 3.13 across Windows, macOS, and Linux and buil
 the distribution. Matrix configuration is not evidence of passing remote jobs;
 review all job results before a public release.
 
-## 10. Scoped Windows scan runner
+## 12. Scoped Windows scan runner
 
 `scripts/run-rudrai-scan.ps1` saves a timestamped report and JSONL event file in
 the ignored `rudrai_scans` folder in this checkout by default. It uses the `Project` profile by default,
@@ -306,7 +417,7 @@ The runner keeps an interactive PowerShell window open by default and sets
 `$LASTEXITCODE` to RudrAI's result. Add `-ExitWithCode` when the script is being
 run non-interactively and the caller should receive the scanner's exit code.
 
-## 11. Release boundary
+## 13. Release boundary
 
 Registry verification is deliberately reserved. Passing `--check-registries`
 returns exit code `2` instead of silently making a network request. Connected
